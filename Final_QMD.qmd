@@ -1,0 +1,415 @@
+---
+title: "QMD for Modeling and Visualizing Performance of Professional Soccer Goalkeepers"
+format: html
+editor: visual
+execute:
+  warning: false
+---
+
+```{r, Installing packages, include= FALSE}
+
+library(tidyverse)
+library(lme4)
+library(mosaic)
+library(xtable)
+library(DescTools)
+```
+
+## Objective 1
+
+```{r, data cleaning}
+final <- read.csv("Data/final.csv") |> #Importing the data
+  mutate(distance = sqrt((x-50)^2 + (y)^2)) |> #Creating the distance metric using the distance formula
+  mutate(angle = acos(abs(x- 50) /distance)* 180/pi) #Creating the angle metric using the angle formula
+final$outcome <- ifelse(final$outcome == "goal", TRUE, FALSE) #Set goals to binary true and false
+```
+
+#### Model
+
+```{r, Model for regression}
+fit = glmer(outcome~angle+distance +angle : distance + (1 + angle +distance + angle : distance | player), family = binomial, data = final ) #Creates our multiple linear regression line with a rank based for each player for angle distance and the interaction term as well. 
+fit_long = fit # Set fit equal to fit long
+summary(fit_long)$coef # show the coeficients of the models 
+#ranef(fit_long)$player
+#xtable( summary(fit_long)$coef, digits = 4 ) Creates the latex tables of the model
+```
+
+#### Graph for Specific Points
+
+```{r, graphing_specfic points within the model}
+#Goal is to show a distribution for every player as a point and how it can be modeled
+new_data <- data.frame(
+  angle = c(0, 50),
+  distance = c(50, 0)
+) # The points that we are testing at
+
+predict(fit_long, newdata = new_data, type ="response", re.form = NA) #Predicts the outcomes
+
+#pdf( "At_points.pdf", height = 5 * 0.9, width = 8 * 0.9 ) Creates the graphic
+
+beta = as.numeric( summary(fit)$coef[,1] ) #sets beta 
+b = ranef(fit)$player # b is the random effect per player
+
+noah = 2 #Sets the random seed for adjustment
+
+ang = 20; dis = 10 # Test point 1 
+mu = ( beta[1] + b[,1] ) + ( beta[2] + b[,2] ) * ang + ( beta[3] + b[,3] ) * dis + ( beta[4] + b[,4] ) * ang * dis # enter it into the model
+theta = exp(mu) / (1 + exp(mu)) #find theta
+plot( density(theta, adjust = noah), type = "l", col = 1, lty = 1, xlim = c(0, 0.65), ylim = c(0, 11),  #Plot theta and make the first line on the graph
+      xlab = "Predicted Probability", main = "", ylab = "", axes = FALSE )
+axis( 1, seq( -0.2, 1, 0.2 ) )
+
+
+ang = 0; dis = 15 # repeats the same steps for a second point
+mu = ( beta[1] + b[,1] ) + ( beta[2] + b[,2] ) * ang + ( beta[3] + b[,3] ) * dis + ( beta[4] + b[,4] ) * ang * dis
+theta = exp(mu) / (1 + exp(mu))
+lines( density(theta, adjust = noah), col = 2, lty = 2 )
+
+ang = 45; dis = 35 # repreats the steps again for a third point
+mu = ( beta[1] + b[,1] ) + ( beta[2] + b[,2] ) * ang + ( beta[3] + b[,3] ) * dis + ( beta[4] + b[,4] ) * ang * dis
+theta = exp(mu) / (1 + exp(mu))
+lines( density(theta, adjust = noah), col = 4, lty = 4 )
+
+legend("topright", legend = c("D = 10 A=20", "D = 15 A=0", "D = 35 A=45"), lty = c(1, 2, 4), col = c(1, 2, 4), bty = "n") #Creates a legend explaining each individual level
+
+#dev.off()
+```
+
+#### Creating The Heatmap
+
+```{r, heatmap}
+grid <- expand.grid(
+  x = 1:100,
+  y = 1:100
+) # Creates a 100 by 100 grid
+
+
+grid <- grid |>
+  mutate(d = sqrt((x-50)^2 + (y)^2)) |>
+  mutate(a =acos(abs(x - 50) /d)* 180/pi)
+#Finds each point on the grids angle and distance
+
+grid$p <- predict(
+  fit,
+  newdata = data.frame(distance = grid$d, angle = grid$a),
+  type = "response",
+  re.form = NA
+) # Finds the predicted probability at each point
+grid <- grid |>
+  mutate(d = sqrt((x-50)^2 + (y)^2)) |>
+  mutate(a =acos(abs(x - 50) /d)* 180/pi) #Creates the grid Distance and angle so we are able to use the predict function
+
+grid$p <- predict(
+  fit,
+  newdata = data.frame(distance = grid$d, angle = grid$a),
+  type = "response",
+  re.form = NA
+) # creates the prediction at every distance and angle
+#pdf( "2025_heatmap", height = 5, width = 7)
+grid |>
+  ggplot(aes(x=x, y=y, fill = p))+ #Specify what x and y is and fills it based on probability
+  geom_raster()+ # Creates a heatmap
+  scale_fill_viridis_c( option = "H", 
+                        breaks = seq(min(grid$p),
+                                     max(grid$p),
+                                     length.out=10), # groups the probability scale by 10
+                        labels = function(x) round(x, 2),
+                        name = "Probability")+
+  geom_contour(aes(z=p),colour = "white", bins = 10)+ #Creates the rings around each group
+  geom_rect( xmin = 25, xmax = 75, ymin = 0, ymax = 25, colour = "yellow", #Creates the rectange of the penalty area
+             fill = NA, linewidth = 1 )+
+  annotate("text", x=50, y=79, color ="white", label = "0.08")+ #annotates each ring with the probability of that ring
+  annotate("text", x=50, y=59, color ="white", label = "0.16")+
+  annotate("text", x=50, y=48, color ="white", label = "0.24")+
+  annotate("text", x=50, y=38, color ="white", label = "0.32")+
+  annotate("text", x=50, y=30, color ="white", label = "0.4")+
+  annotate("text", x=50, y=21, color ="white", label = "0.47+")
+
+#dev.off() #Stops the pdf
+```
+
+#### Second Heatmap
+
+```{r, heatmap_player}
+grid2 <- expand.grid(
+  x = 1:100,
+  y = 1:100
+)
+
+grid2 <- grid2 |>
+  mutate(d = sqrt((x-50)^2 + (y)^2)) |>
+  mutate(a =acos(abs(x - 50) /d)* 180/pi,
+         player = "Kang Hyeon-Mu") # We need this line to specify the player we are looking at so we can predict for this player
+grid2$p <- predict(
+  fit,
+  newdata = data.frame(distance = grid2$d, angle = grid2$a, player = grid2$player),
+  type = "response",
+)
+
+#pdf( "Fig_Player.pdf", height = 5, width = 7) Creates the PDF
+grid2 |>
+  ggplot(aes(x=x, y=y, fill = p))+ # Similar code to above
+  geom_raster()+
+  scale_fill_viridis_c( option = "H", 
+                        breaks = seq(min(grid2$p),
+                                     max(grid2$p),
+                                     length.out=10),
+                        labels = function(x) round(x, 2),
+                        name = "Probability")+
+  geom_contour(aes(z=p),colour = "white", bins = 10)+
+  geom_rect(
+    xmin = 25, xmax = 75,
+    ymin = 0, ymax = 25,
+    colour = "yellow",
+    fill = NA,
+    linewidth = 1
+  )+
+  annotate("text", x=50, y=76, color ="white", label = "0.08")+
+  annotate("text", x=50, y=58, color ="white", label = "0.16")+
+  annotate("text", x=50, y=45, color ="white", label = "0.24")+
+  annotate("text", x=50, y=37, color ="white", label = "0.32")+
+  annotate("text", x=50, y=30, color ="white", label = "0.40")+
+  annotate("text", x=50, y=21, color ="white", label = "0.48")+
+  annotate("text", x=50, y=16, color ="white", label = "0.56+")
+#dev.off()
+```
+
+#### Difference Heatmap
+
+```{r, heatmap_diff}
+grid_diff<- grid2
+
+grid_diff$p <- grid2$p -grid$p #Finds the difference between the probability of the player compared to the league average.
+
+#tally(~grid_diff$p>0) Just checking the average difference for the player
+#pdf( "Fig_Diff.pdf", height = 5, width = 7 )
+
+grid_diff |> 
+  ggplot(aes(x=x, y=y, fill = p))+ #Similar code to the other 2 heatmaps
+  geom_raster()+
+  scale_fill_viridis_c( option = "H", 
+                        breaks = seq(min(grid_diff$p),
+                                     max(grid_diff$p),
+                                     length.out=5),
+                        labels = function(x) round(x, 2),
+                        name = "Probability")+
+  geom_rect(
+    xmin = 25, xmax = 75,
+    ymin = 0, ymax = 25,
+    colour = "yellow",
+    fill = NA,
+    linewidth = 1
+  ) +
+  geom_contour(aes(z=p),colour = "white", bins = 5)
+  
+#dev.off()
+```
+
+## Objective 2
+
+#### Model
+
+```{r, objective_2_cleaning_model}
+goalie_24 <-read.csv("Data/K1_24.csv") |> # Mutating the dataset for 2024 the same as 2025
+  select(-X) |>
+  mutate(distance = sqrt((x-50)^2 + (y)^2)) |>
+  mutate(angle = acos(abs(x- 50) /distance)* 180/pi) 
+goalie_24$outcome <- ifelse(goalie_24$outcome == "goal", TRUE, FALSE)
+  
+
+fit_24 = glmer(outcome~angle+distance +angle : distance + (1 + angle +distance + angle : distance | player), family = binomial, data = goalie_24  ) #Creating the same glmer except for the 2024 season
+summary(fit_24)
+```
+
+#### 2024 Heatmap
+
+```{r, heatmap_2024}
+grid_24 <- expand.grid( #Same exact code for 2025 except with 2024 data, Was not used in paper
+  x = 1:100,
+  y = 1:100
+)
+
+grid_24 <- grid_24 |>
+  mutate(d = sqrt((x-50)^2 + (y)^2)) |>
+  mutate(a =acos(abs(x - 50) /d)* 180/pi)
+
+grid_24$p <- predict(
+  fit_24,
+  newdata = data.frame(distance = grid_24$d, angle = grid_24$a),
+  type = "response",
+  re.form = NA
+)
+grid_24 <- grid_24 |>
+  mutate(d = sqrt((x-50)^2 + (y)^2)) |>
+  mutate(a =acos(abs(x - 50) /d)* 180/pi)
+
+grid_24 |>
+  ggplot(aes(x=x, y=y, fill = p))+
+  geom_raster()+
+  scale_fill_viridis_c( option = "H", 
+                        breaks = seq(min(grid_24$p),
+                                     max(grid_24$p),
+                                     length.out=10),
+                        labels = function(x) round(x, 2),
+                        name = "Probability")+
+  geom_contour(aes(z=p),colour = "white", bins = 10)+
+  geom_rect( xmin = 25, xmax = 75, ymin = 0, ymax = 25, colour = "yellow",
+             fill = NA, linewidth = 1 )
+```
+
+#### Player Heatmap
+
+```{r, player_2024}
+grid2_24 <- expand.grid( #Same code for player in 2025 for 2024
+  x = 1:100,
+  y = 1:100
+)
+
+grid2_24 <- grid2_24 |>
+  mutate(d = sqrt((x-50)^2 + (y)^2)) |>
+  mutate(a =acos(abs(x - 50) /d)* 180/pi,
+         player = "Kang Hyeon-Mu")
+grid2_24$p <- predict(
+  fit_24,
+  newdata = data.frame(distance = grid2_24$d, angle = grid2_24$a, player = grid2_24$player),
+  type = "response",
+)
+grid2_24 |>
+  ggplot(aes(x=x, y=y, fill = p))+
+  geom_raster()+
+  scale_fill_viridis_c( option = "H", 
+                        breaks = seq(min(grid2_24$p),
+                                     max(grid2_24$p),
+                                     length.out=10),
+                        labels = function(x) round(x, 2),
+                        name = "Probability")+
+  geom_contour(aes(z=p),colour = "white", bins = 10)+
+  geom_rect(
+    xmin = 25, xmax = 75,
+    ymin = 0, ymax = 25,
+    colour = "yellow",
+    fill = NA,
+    linewidth = 1
+  )
+```
+
+#### More cleaning for objective 2
+
+```{r, difference_cleaning}
+final_25 <- final |> #Creating variable for year for 2025
+  mutate( year = 25)
+
+
+final_24 <- goalie_24 |> #Creating variable for year for 2024
+  mutate(year = 24)
+
+final_24_25 <- rbind(final_24, final_25) #Combining those 2 datasets
+final_24_25 = as.data.frame(final_24_25)
+#head(final_24_25)
+#unique( final_24_25$player )
+x <- intersect(final$player, goalie_24$player) #Finding the intersect of players who played both seasons
+index = which( final_24_25$player %in% x ) #Saves the players who are in the intersect 
+final_z = final_24_25[index,] #saves the players in the intersect
+
+shot_pct_by_player <- final_z %>% #Simplifies the dataset
+  group_by(player, year) %>%
+  summarise(
+    save_percentage = mean(outcome == "FALSE"),
+    saves = count(outcome == "FALSE"), #Creates the saves variable
+    attempts = n(),
+    .groups = "drop"
+  )
+
+shot_wide <- shot_pct_by_player |>
+  mutate(year = trimws(as.character(year))) |> # TUrns the data wide instead of long that way we can compare between the 2 years
+  pivot_wider(
+    names_from = year,
+    values_from = c(save_percentage,attempts, saves)
+  )
+shot_clean <- shot_wide |> #Cleans the data so we only have data from 2024 and 2025 for the variables we care about
+  group_by(player) |>
+  summarise(
+    pct_24= max(save_percentage_24, na.rm = TRUE),
+    pct_25= max(save_percentage_25, na.rm = TRUE),
+    saves_24,
+    attempts_24,
+    saves_25,
+    attempts_25
+    ) |>
+  filter(player != "Kim Yu-Sung") #Removes this player as he only has one shot attempted on him and was scored on so he appears as a major outlier
+```
+
+#### Difference Graphs
+
+```{r, Model_grahic_difference}
+fit = glm( saves_25/attempts_25 ~ pct_24, data = shot_clean, family = binomial, 
+           weights = attempts_25) #Creates our model between 2024 and 2025 the weights specifiy that the 2035 one is what it is in relation to. As the attempts the goalkeeper faces is important.
+summary(fit)
+
+shot_clean$pred <- predict(fit, type = "response") #Creates a prediction line
+
+
+#pdf( "24_25.pdf", height = 5, width = 8) Allows us to save the graph
+
+ggplot(aes(x = pct_24, y = pct_25), data=shot_clean)+ #Creates a graph 
+  geom_point()+
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red")+
+  coord_cartesian(xlim = c(0.6,0.8), ylim =c(0.6,0.8))+
+  geom_line(aes(y=pred), color = "blue")+
+  labs(x = "Proportion of shots saved in 2024",
+       y ="Proportion of shots saved in 2025")
+
+#dev.off() Turns off the graph
+
+cor.test( pct_25 ~ pct_24, data = shot_clean )
+```
+
+## Objective 3
+
+```{r, shot proportion when leading versus trailing}
+timeline_x <-read.csv("Data/FC_Seoul_2025_Time_Distribution.csv") |> # Cleans the dataset by shows time leading and trailing relative to 90 mins along with shot division and difference betwen their time leading versus trailing
+  mutate(trailing_prop = Trailing/90) |>
+  mutate(leading_prop = Leading/90) |>
+  mutate(shots_division = shots_inside/shots) |>
+  mutate(diff = Leading - Trailing)
+
+fit = glm((shots_inside/shots) ~ (diff), data = timeline_x, family = binomial, weights = shots) #our model for these variables using a GLM with a weight on the amount of shots
+summary(fit)
+
+#xtable( summary(fit)$coef, digits = 4 ) prints the table in laTex
+
+#pdf( "Leading.pdf", height = 5, width = 8 ) turns graph into a PDF
+
+ggplot(aes(x= diff, y = shots_division),data = timeline_x) + # Graphs the difference as an scatterplot
+  geom_point()+
+  stat_smooth(method = "glm", #adds a line for the glm 
+              method.args = list(family = "binomial"))+
+  labs( y ="Proportion of shots inside",
+       x = "Time leading in minutes")
+#dev.off() 
+```
+
+## Objective 4
+
+```{r, age graph and model}
+age = read.csv( "Data/ages.csv" ) #Reads in the age dataset
+
+t = table(age$Player) #Creates a player of every players age
+p = names(t)[ t >= 3 ] # Keeps the ones where t is greater or equal to 3
+age$saved = age$faced - age$goals_allowed # creates amount go goals goalkeeper saved
+age$per_saved = age$saved/age$faced # Creates proportion of the amount of shots saved
+
+fit = glmer( saved/faced ~ 1 + age + ( 1 | Player), 
+             family = binomial, weights = faced, data = subset( age, Player %in% p ) ) # Creates our needed model subseted by the players from group p with us studying save proportion against age and factored by player
+summary(fit)
+
+#pdf( "age.pdf", height = 5, width = 8) pdf of the graph
+ggplot(aes(x = age, y = per_saved, group = Player, color = Player), data = subset( age, Player %in% p ))+
+  geom_point()+ #Creates a scatterplot with age, perportion saved, with player being by color
+  geom_line()+ # Makes a line for each individual 
+  theme_minimal()+ 
+  labs(x = "Age",
+       y="Proportion saved"
+       ) 
+#dev.off() turns off the pdf.
+```
